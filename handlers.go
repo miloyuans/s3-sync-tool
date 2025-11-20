@@ -80,14 +80,14 @@ func buildEnvKeyboard(state *UserState) tgbotapi.InlineKeyboardMarkup {
 	for _, env := range cfg.Environments {
 		prefix := "○"
 		if contains(state.DstEnvs, env.Name) {
-			prefix = "●"
+			prefix = "● [Selected]"
 		}
 		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%s %s", prefix, env.Name),
 			fmt.Sprintf("toggle_env|%s", env.Name))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("确认部署 →", "confirm_deploy"),
+		tgbotapi.NewInlineKeyboardButtonData("确认部署 [Checkmark]", "confirm_deploy"),
 	))
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
@@ -112,7 +112,7 @@ func handleCallback(cb *tgbotapi.CallbackQuery) {
 		return
 	}
 	action := parts[0]
-	bot.Request(tgbotapi.NewCallback(cb.ID, ""))
+	bot.Request(tgbotapi.NewCallback(cb.CallbackQuery.ID, ""))
 
 	if action == "toggle_env" && len(parts) > 1 {
 		toggleSlice(&state.DstEnvs, parts[1])
@@ -125,10 +125,10 @@ func handleCallback(cb *tgbotapi.CallbackQuery) {
 
 	if action == "confirm_deploy" {
 		if len(state.DstEnvs) == 0 {
-			bot.Request(tgbotapi.NewCallback(cb.ID, "请至少选择一个环境"))
+			bot.Request(tgbotapi.NewCallback(cb.CallbackQuery.ID, "请至少选择一个环境"))
 			return
 		}
-		bot.Request(tgbotapi.NewCallbackWithAlert(cb.ID, "开始部署..."))
+		bot.Request(tgbotapi.NewCallbackWithAlert(cb.CallbackQuery.ID, "开始部署..."))
 		go executeSmartUpload(state)
 	}
 

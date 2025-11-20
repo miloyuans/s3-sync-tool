@@ -2,21 +2,10 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
@@ -35,7 +24,7 @@ type EnvConfig struct {
 	Name   string `yaml:"name"`
 	Region string `yaml:"region"`
 	Bucket string `yaml:"bucket"`
-	AK     string `yaml:"access_key27_id"`
+	AK     string `yaml:"access_key_id"`
 	SK     string `yaml:"secret_access_key"`
 }
 
@@ -114,8 +103,8 @@ func handleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
-	if strings.HasPrefix(msg.Text, "/sync") {
-		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "当前版本专注一键部署，/sync 功能暂未启用"))
+	if strings.HasPrefix(msg.Text, "/start") || strings.HasPrefix(msg.Text, "/help") {
+		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "请直接发送 .zip 压缩包即可一键部署"))
 	}
 }
 
@@ -128,7 +117,6 @@ func isAdmin(id int64) bool {
 	return false
 }
 
-// 消息清理 + 发送新消息
 func clearAndSend(state *UserState, text string, markup *tgbotapi.InlineKeyboardMarkup) *tgbotapi.Message {
 	for _, id := range state.MsgIDs {
 		bot.Request(tgbotapi.NewDeleteMessage(state.ChatID, id))
@@ -140,11 +128,7 @@ func clearAndSend(state *UserState, text string, markup *tgbotapi.InlineKeyboard
 		msg.ReplyMarkup = markup
 	}
 	msg.ParseMode = "Markdown"
-	sent, err := bot.Send(msg)
-	if err != nil {
-		log.Error("发送消息失败: ", err)
-		return nil
-	}
+	sent, _ := bot.Send(msg)
 	state.MsgIDs = append(state.MsgIDs, sent.MessageID)
 	return &sent
 }
