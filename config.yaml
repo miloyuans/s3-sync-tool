@@ -1,53 +1,24 @@
-# =============================================
-# S3 跨账户增量同步工具配置文件（Go 1.25 生产版）
-# 文件名：config.yaml
-# =============================================
+telegram_token: "123456789:AAFxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+threads: 100
 
-# 源账户（支持多个）
-sources:
-  - name: prod-backup-2025               # 任意描述性名称，用于日志显示
-    region: us-east-1                     # 源桶所在区域
-    bucket: company-prod-data-backup      # 源桶名
-    prefix: backup/2025/                  # 要同步的前缀（为空表示整个桶）
-    access_key_id: AKIAxxxxxxxxxxxxxxxx  # 源账户 AccessKey
-    secret_access_key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+admins:
+  - 123456789   # 替换为你的 Telegram 用户 ID
 
-  # 可继续添加多个源
-  # - name: logs-source
-  #   region: ap-southeast-1
-  #   bucket: company-logs-2024
-  #   prefix: ""
-  #   access_key_id: AKIA...
-  #   secret_access_key: ...
+environments:
+  - name: dev
+    region: us-east-1
+    bucket: my-company-dev-bucket
+    access_key_id: AKIA...
+    secret_access_key: ...
 
-# 目标账户（支持多个）
-destinations:
-  - name: archive-cold-storage            # 目标描述名
-    region: eu-west-1                      # 目标桶区域
-    bucket: company-archive-2025           # 目标桶名
-    prefix: ""                             # 目标统一前缀（为空则不加）
-    access_key_id: AKIAyyyyyyyyyyyyyyyy   # 目标账户 AccessKey
-    secret_access_key: yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+  - name: prod
+    region: us-east-1
+    bucket: my-company-prod-bucket
+    access_key_id: AKIA...
+    secret_access_key: ...
 
-# 目录映射规则（从上到下优先级依次降低，支持多条）
-directory_mappings:
-  - source_prefix: backup/2025/           # 源目录前缀（必须以 / 结尾）
-    target_prefix: archived/2025-backup/  # 目标目录前缀
-
-  - source_prefix: logs/
-    target_prefix: new-logs/v2/
-
-  # 最后一条兜底规则（整个桶原样同步）
-  - source_prefix: ""
-    target_prefix: ""
-
-# 默认标签（当源对象没有任何标签时自动打上）
-default_tags:
-  public: "yes"
-  synced-by: "s3-sync-tool-go1.25"
-  sync-time: "2025-11-18"
-  project: "data-migration"
-
-# 全局配置
-threads: 100                    # 并发数（建议 50~200，根据带宽和 CPU 调整）
-log_file: sync.log              # 日志文件路径（为空则输出到终端）
+  - name: eks-hb
+    region: ap-southeast-1
+    bucket: my-company-hb-bucket
+    access_key_id: AKIA...
+    secret_access_key: ...
