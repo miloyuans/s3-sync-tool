@@ -1,5 +1,5 @@
-// main.go —— 企业级 S3 + Telegram 多环境部署机器人（完整终极版）
-// 支持：无限层级目录浏览、分页、自动路径匹配、自动创建目录、对话自动清理、最终仅一条总结
+// main.go —— 企业级 S3 + Telegram 多环境部署机器人（完整终极修复版）
+// 功能完整保留 + 智能路径匹配 + 目录不存在自动创建 + 对话自动清理 + 最终仅一条总结
 package main
 
 import (
@@ -52,13 +52,16 @@ type GlobalConfig struct {
 
 type UserState struct {
 	Step          string
-	DstEnvs       []string          // 目标环境
-	UploadRoot    string            // ZIP 中识别出的公共前缀，如 admin/v3/
-	UnzipPath     string            // 解压目录
-	ZipPath       string            // 原始ZIP路径
+	SrcEnv        string
+	DstEnvs       []string
+	CurrentPath   string   // 当前浏览的 S3 路径
+	UploadRoot    string   // ZIP 识别出的公共前缀
+	UploadDirs    []string
+	UnzipPath     string
+	ZipPath       string
 	ChatID        int64
-	MsgIDs        []int             // 所有交互消息ID，用于清理
-	AutoCreateAll bool              // 是否已确认全部自动创建目录
+	MsgIDs        []int // 所有交互消息，用于自动清理
+	AutoCreateAll bool
 	mu            sync.Mutex
 }
 
@@ -67,7 +70,7 @@ const PageSize = 10
 func main() {
 	data, err := os.ReadFile("config.yaml")
 	if err != nil {
-		panic("无法读取 config.yaml: " + err.Error())
+		panic("无法读取 config5592.yaml: " + err.Error())
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		panic("config.yaml 解析失败: " + err.Error())
@@ -116,12 +119,13 @@ func handleMessage(msg *tgbotapi.Message) {
 			bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "错误：只接受 .zip 压缩包"))
 			return
 		}
+(",");
 		go handleZipUpload(msg)
 		return
 	}
 
 	if strings.HasPrefix(msg.Text, "/sync") {
-		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "暂未实现 /sync 同步功能（本版专注一键部署）"))
+		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "暂未启用 /sync 功能（本版专注一键部署）"))
 	}
 }
 
@@ -134,7 +138,7 @@ func isAdmin(id int64) bool {
 	return false
 }
 
-// ==================== 消息清理工具 ====================
+// ==================== 消息管理工具 ====================
 func deleteMessages(chatID int64, msgIDs []int) {
 	for _, id := range msgIDs {
 		bot.Request(tgbotapi.NewDeleteMessage(chatID, id))
@@ -148,17 +152,22 @@ func addMsgID(state *UserState, msgID int) {
 func clearAndSend(state *UserState, text string, markup *tgbotapi.InlineKeyboardMarkup) *tgbotapi.Message {
 	deleteMessages(state.ChatID, state.MsgIDs)
 	state.MsgIDs = state.MsgIDs[:0]
+
 	msg := tgbotapi.NewMessage(state.ChatID, text)
 	if markup != nil {
 		msg.ReplyMarkup = markup
 	}
 	msg.ParseMode = "Markdown"
-	sent, _ := bot.Send(msg)
+	sent, err := bot.Send(msg)
+	if err != nil {
+		log.Error("发送消息失败: ", err)
+		return nil
+	}
 	addMsgID(state, sent.MessageID)
 	return sent
 }
 
-// ==================== ZIP 智能上传主流程 ====================
+// ==================== ZIP 智能上传 ====================
 func handleZipUpload(msg *tgbotapi.Message) {
 	taskID := fmt.Sprintf("zip_%d_%s", msg.From.ID, msg.Document.FileID)
 	if _, loaded := taskLock.LoadOrStore(taskID, true); loaded {
@@ -171,7 +180,7 @@ func handleZipUpload(msg *tgbotapi.Message) {
 
 	fileLink, err := bot.GetFileDirectURL(msg.Document.FileID)
 	if err != nil {
-		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "获取文件失败"))
+		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "获取文件链接失败"))
 		return
 	}
 
@@ -220,7 +229,7 @@ func handleZipUpload(msg *tgbotapi.Message) {
 	stateLock.Unlock()
 
 	kb := buildEnvKeyboard(state)
-	text := fmt.Sprintf("*ZIP 分析完成*\n\n检测到公共路径：`%s`\n目录数量：%d 个\n\n请勾选要部署的目标环境：", commonPrefix, len(dirs))
+	text := fmt.Sprintf("*ZIP 分析完成*\n\n检测到公共路径：`%s`\n顶级目录数量：%d 个\n\n请选择要部署的目标环境：", commonPrefix, len(dirs))
 	clearAndSend(state, text, &kb)
 }
 
@@ -295,7 +304,7 @@ func handleCallback(cb *tgbotapi.CallbackQuery) {
 	}
 }
 
-// ==================== 智能部署核心函数 ====================
+// ==================== 智能部署核心 ====================
 func executeSmartUpload(state *UserState) {
 	summary := "*部署总结*\n\n"
 	successTotal := 0
@@ -386,7 +395,10 @@ func dirExistsS3(client *s3.Client, bucket, prefix string) bool {
 		Prefix:  &prefix,
 		MaxKeys: aws.Int32(1),
 	})
-	return err == nil && (len(resp.Contents) > 0 || len(resp.CommonPrefixes) > 0)
+	if err != nil {
+		return false
+	}
+	return len(resp.Contents) > 0 || len(resp.CommonPrefixes) > 0
 }
 
 func newS3Client(region, ak, sk string) (*s3.Client, *manager.Downloader, *manager.Uploader) {
@@ -419,6 +431,7 @@ func listTopLevelDirsLocal(path string) []string {
 		}
 		return filepath.SkipDir
 	})
+	sort.Strings(dirs)
 	return dirs
 }
 
