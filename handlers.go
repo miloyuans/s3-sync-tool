@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -47,6 +48,7 @@ func handleZipUpload(msg *tgbotapi.Message) {
 		return
 	}
 
+	// 计算最长公共前缀
 	commonPrefix := dirs[0]
 	for _, d := range dirs[1:] {
 		commonPrefix = longestCommonPrefix(commonPrefix, d)
@@ -78,16 +80,16 @@ func handleZipUpload(msg *tgbotapi.Message) {
 func buildEnvKeyboard(state *UserState) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, env := range cfg.Environments {
-		prefix := "○"
+		mark := "○"
 		if contains(state.DstEnvs, env.Name) {
-			prefix = "● [Selected]"
+			mark = "●"
 		}
-		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%s %s", prefix, env.Name),
+		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%s %s", mark, env.Name),
 			fmt.Sprintf("toggle_env|%s", env.Name))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("确认部署 [Checkmark]", "confirm_deploy"),
+		tgbotapi.NewInlineKeyboardButtonData("确认部署", "confirm_deploy"),
 	))
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
@@ -112,7 +114,7 @@ func handleCallback(cb *tgbotapi.CallbackQuery) {
 		return
 	}
 	action := parts[0]
-	bot.Request(tgbotapi.NewCallback(cb.CallbackQuery.ID, ""))
+	bot.Request(tgbotapi.NewCallback(cb.ID, "")) // 正确字段是 cb.ID
 
 	if action == "toggle_env" && len(parts) > 1 {
 		toggleSlice(&state.DstEnvs, parts[1])
@@ -125,10 +127,10 @@ func handleCallback(cb *tgbotapi.CallbackQuery) {
 
 	if action == "confirm_deploy" {
 		if len(state.DstEnvs) == 0 {
-			bot.Request(tgbotapi.NewCallback(cb.CallbackQuery.ID, "请至少选择一个环境"))
+			bot.Request(tgbotapi.NewCallback(cb.ID, "请至少选择一个环境"))
 			return
 		}
-		bot.Request(tgbotapi.NewCallbackWithAlert(cb.CallbackQuery.ID, "开始部署..."))
+		bot.Request(tgbotapi.NewCallbackWithAlert(cb.ID, "开始部署..."))
 		go executeSmartUpload(state)
 	}
 

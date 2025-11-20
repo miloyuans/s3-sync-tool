@@ -3,6 +3,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,7 +63,7 @@ func main() {
 	os.MkdirAll("uploads", 0755)
 	os.MkdirAll("logs", 0755)
 
-	logFile := fmt.Sprintf("logs/%s.log", time.Now().Format("2006-01-02"))
+	logFile := time.Now().Format("logs/2006-01-02.log")
 	f, _ := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	log.SetOutput(f)
 	log.SetFormatter(&logrus.TextFormatter{FullTimestamp: true})
@@ -104,7 +105,7 @@ func handleMessage(msg *tgbotapi.Message) {
 	}
 
 	if strings.HasPrefix(msg.Text, "/start") || strings.HasPrefix(msg.Text, "/help") {
-		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "请直接发送 .zip 压缩包即可一键部署"))
+		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "请直接发送 .zip 压缩包即可一键部署到多个环境"))
 	}
 }
 
@@ -117,6 +118,7 @@ func isAdmin(id int64) bool {
 	return false
 }
 
+// 清理旧消息 + 发送新消息
 func clearAndSend(state *UserState, text string, markup *tgbotapi.InlineKeyboardMarkup) *tgbotapi.Message {
 	for _, id := range state.MsgIDs {
 		bot.Request(tgbotapi.NewDeleteMessage(state.ChatID, id))
