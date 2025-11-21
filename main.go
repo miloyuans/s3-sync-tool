@@ -37,7 +37,7 @@ type GlobalConfig struct {
 }
 
 type UserState struct {
-	Step          string
+	Step          string   // "src_env" | "dst_env" | "upload_select_env"
 	SrcEnvs       []string
 	DstEnvs       []string
 	UploadRoot    string
@@ -109,9 +109,10 @@ func handleMessage(msg *tgbotapi.Message) {
 	}
 
 	if strings.HasPrefix(text, "/start") || strings.HasPrefix(text, "/help") {
-		help := "*可用功能：*\n" +
-			"`/sync` - 多环境目录同步（保留所有标签、ACL、属性）\n" +
-			"发送 `.zip` - 一键部署（强制打 public=yes 标签）"
+		help := "*S3 多环境同步 & 一键部署机器人*\n\n" +
+			"`/sync` - 多环境目录同步（保留标签、ACL）\n" +
+			"发送 `.zip` - 一键部署（强制打 public=yes 标签）\n" +
+			"任意步骤可点击 *取消* 按钮终止操作"
 		msgConfig := tgbotapi.NewMessage(msg.Chat.ID, help)
 		msgConfig.ParseMode = "Markdown"
 		bot.Send(msgConfig)
@@ -144,9 +145,7 @@ func clearAndSend(state *UserState, text string, markup *tgbotapi.InlineKeyboard
 }
 
 func cleanupUserState(chatID int64) {
-	time.AfterFunc(30*time.Minute, func() {
-		stateLock.Lock()
-		delete(userStates, chatID)
-		stateLock.Unlock()
-	})
+	stateLock.Lock()
+	delete(userStates, chatID)
+	stateLock.Unlock()
 }

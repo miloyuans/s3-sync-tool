@@ -30,7 +30,7 @@ func startSyncFlow(chatID int64) {
 func buildEnvKeyboard(state *UserState, step string) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	selected := state.SrcEnvs
-	if step == "dst_env" || step == "upload_select_env" {
+	if step != "src_env" {
 		selected = state.DstEnvs
 	}
 
@@ -46,9 +46,15 @@ func buildEnvKeyboard(state *UserState, step string) tgbotapi.InlineKeyboardMark
 			fmt.Sprintf("toggle_env|%s|%s", step, env.Name))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("下一步 →", "next_step"),
-	))
+
+	nextText := "下一步 →"
+	if step == "upload_select_env" {
+		nextText = "确认部署 →"
+	}
+	nextBtn := tgbotapi.NewInlineKeyboardButtonData(nextText, "next_step")
+	cancelBtn := tgbotapi.NewInlineKeyboardButtonData("取消", "cancel")
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(nextBtn, cancelBtn))
+
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
@@ -100,7 +106,7 @@ func handleZipUpload(msg *tgbotapi.Message) {
 	state := &UserState{
 		Step:        "upload_select_env",
 		DstEnvs:     []string{},
-		UploadRoot:  commonPrefix,
+		UploadRoot:  common oversight
 		UnzipPath:   unzipDir,
 		ZipPath:     zipPath,
 		ChatID:      msg.Chat.ID,
@@ -148,9 +154,9 @@ func handleCallback(cb *tgbotapi.CallbackQuery) {
 			toggleSlice(&state.DstEnvs, env)
 		}
 		kb := buildEnvKeyboard(state, step)
-		text := fmt.Sprintf("已选择（%d个）", len(state.DstEnvs))
+		text := fmt.Sprintf("已选择 %d 个", len(state.DstEnvs))
 		if step == "src_env" {
-			text = fmt.Sprintf("源环境（%d个）", len(state.SrcEnvs))
+			text = fmt.Sprintf("源环境已选 %d 个", len(state.SrcEnvs))
 		}
 		edit := tgbotapi.NewEditMessageTextAndMarkup(cb.Message.Chat.ID, cb.Message.MessageID, text, kb)
 		edit.ParseMode = "Markdown"
@@ -168,39 +174,32 @@ func handleCallback(cb *tgbotapi.CallbackQuery) {
 			clearAndSend(state, "*第2步：请选择【目标环境】（可多选）*", &kb)
 			return
 		}
-		if state.Step == "dst_env" && len(state.DstEnvs) == 0 {
-			bot.Request(tgbotapi.NewCallback(cb.ID, "请选择目标环境"))
+
+		// dst_env 或 upload_select_env 点击下一步
+		if len(state.DstEnvs) == 0 {
+			bot.Request(tgbotapi.NewCallback(cb.ID, "请至少选择一个目标环境"))
 			return
 		}
+
 		if state.Step == "dst_env" {
 			bot.Request(tgbotapi.NewCallbackWithAlert(cb.ID, "开始同步..."))
 			go executeSync(state)
-			cleanupUserState(state.ChatID)
+		} else if state.Step == "upload_select_env" {
+			bot.Request(tgbotapi.NewCallbackWithAlert(cb.ID, "开始部署..."))
+			go executeSmartUpload(state)
 		}
+		cleanupUserState(state.ChatID)
 	}
 
-	if action == "confirm_deploy" {
-		if len(state.DstEnvs) == 0 {
-			bot.Request(tgbotapi.NewCallback(cb.ID, "请至少选择一个环境"))
-			return
-		}
-		bot.Request(tgbotapi.NewCallbackWithAlert(cb.ID, "开始部署..."))
-		go executeSmartUpload(state)
-	}
-
-	if action == "create_all" {
-		state.AutoCreateAll = true
-		go executeSmartUpload(state)
-	}
-
-	if action == "cancel_deploy" {
+	if action == "cancel" {
 		cleanupFiles(state.ZipPath, state.UnzipPath)
-		clearAndSend(state, "已取消部署", nil)
-		cleanupUserState(cb.Message.Chat.ID)
+		clearAndSend(state, "已取消操作，所有临时内容已清理。", nil)
+		cleanupUserState(state.ChatID)
 	}
 }
 
 func executeSync(state *UserState) {
+	log.Infof("开始同步任务: %v → %v", state.SrcEnvs, state.DstEnvs)
 	summary := "*同步完成*\n\n"
 	totalSuccess := 0
 	totalFail := 0
@@ -213,6 +212,7 @@ func executeSync(state *UserState) {
 			dstEnv := findEnvByName(dstName)
 			dstClient, _, dstUL := newS3Client(dstEnv.Region, dstEnv.AK, dstEnv.SK)
 
+			log.Infof("同步 %s → %s", srcEnv.Bucket, dstEnv.Bucket)
 			success, fail := syncOneDirectory(srcClient, srcDL, dstClient, dstUL,
 				srcEnv.Bucket, dstEnv.Bucket, "", state.ChatID)
 			totalSuccess += success
@@ -225,6 +225,7 @@ func executeSync(state *UserState) {
 }
 
 func executeSmartUpload(state *UserState) {
+	log.Infof("开始部署任务: %s → %v", state.UploadRoot, state.DstEnvs)
 	summary := "*部署总结*\n\n"
 	successTotal := 0
 	failTotal := 0
@@ -244,7 +245,7 @@ func executeSmartUpload(state *UserState) {
 			kb := tgbotapi.NewInlineKeyboardMarkup(
 				tgbotapi.NewInlineKeyboardRow(
 					tgbotapi.NewInlineKeyboardButtonData("全部创建并上传", "create_all"),
-					tgbotapi.NewInlineKeyboardButtonData("取消部署", "cancel_deploy"),
+					tgbotapi.NewInlineKeyboardButtonData("取消部署", "cancel"),
 				),
 			)
 			clearAndSend(state, fmt.Sprintf("路径 `%s` 在环境 *%s* 不存在\n是否创建？", s3Prefix, envName), &kb)

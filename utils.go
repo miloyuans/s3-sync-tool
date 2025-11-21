@@ -71,6 +71,7 @@ func uploadDirectoryWithPublicTag(client *s3.Client, uploader *manager.Uploader,
 		}
 		defer f.Close()
 
+		log.Infof("上传文件: %s → %s", path, key)
 		_, err = uploader.Upload(context.Background(), &s3.PutObjectInput{
 			Bucket:  &bucket,
 			Key:     &key,
@@ -139,6 +140,7 @@ func syncOneDirectory(srcClient *s3.Client, srcDL *manager.Downloader, dstClient
 				}
 			}(key)
 
+			log.Infof("同步文件: %s → %s", key, targetKey)
 			_, err = dstUL.Upload(context.Background(), &s3.PutObjectInput{
 				Bucket: &dstBucket,
 				Key:    &targetKey,
