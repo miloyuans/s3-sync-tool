@@ -38,6 +38,7 @@ type GlobalConfig struct {
 
 type UserState struct {
 	Step          string
+	SrcEnvs       []string
 	DstEnvs       []string
 	UploadRoot    string
 	UnzipPath     string
@@ -55,9 +56,6 @@ func main() {
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		panic("config.yaml 解析失败: " + err.Error())
-	}
-	if cfg.Threads <= 0 {
-		cfg.Threads = 100
 	}
 
 	os.MkdirAll("uploads", 0755)
@@ -104,8 +102,17 @@ func handleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
-	if strings.HasPrefix(msg.Text, "/start") || strings.HasPrefix(msg.Text, "/help") {
-		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "请直接发送 .zip 压缩包即可一键部署到多个环境"))
+	text := strings.TrimSpace(msg.Text)
+	if text == "/sync" {
+		startSyncFlow(msg.Chat.ID)
+		return
+	}
+
+	if strings.HasPrefix(text, "/start") || strings.HasPrefix(text, "/help") {
+		help := "*可用功能：*\n" +
+			"`/sync` - 多环境目录同步（保留标签、权限）\n" +
+			"发送 `.zip` - 一键部署（自动创建目录 + 打 public=yes 标签）"
+		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, help).WithParseMode("Markdown"))
 	}
 }
 
@@ -118,7 +125,6 @@ func isAdmin(id int64) bool {
 	return false
 }
 
-// 清理旧消息 + 发送新消息
 func clearAndSend(state *UserState, text string, markup *tgbotapi.InlineKeyboardMarkup) *tgbotapi.Message {
 	for _, id := range state.MsgIDs {
 		bot.Request(tgbotapi.NewDeleteMessage(state.ChatID, id))
