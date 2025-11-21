@@ -4,6 +4,7 @@ package main
 import (
 	"archive/zip"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -19,14 +20,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
-// 流式传输适配器
 type writerAtAdapter struct{ w *io.PipeWriter }
 
 func (a writerAtAdapter) WriteAt(p []byte, _ int64) (int, error) {
 	return a.w.Write(p)
 }
 
-// 创建 S3 客户端
 func newS3Client(region, ak, sk string) (*s3.Client, *manager.Downloader, *manager.Uploader) {
 	cfg, _ := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(region),
@@ -36,7 +35,6 @@ func newS3Client(region, ak, sk string) (*s3.Client, *manager.Downloader, *manag
 	return client, manager.NewDownloader(client), manager.NewUploader(client)
 }
 
-// 查找环境配置
 func findEnvByName(name string) *EnvConfig {
 	for _, e := range cfg.Environments {
 		if e.Name == name {
@@ -46,7 +44,6 @@ func findEnvByName(name string) *EnvConfig {
 	return nil
 }
 
-// 判断路径是否存在
 func dirExistsS3(client *s3.Client, bucket, prefix string) bool {
 	resp, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
 		Bucket:  &bucket,
@@ -56,7 +53,6 @@ func dirExistsS3(client *s3.Client, bucket, prefix string) bool {
 	return err == nil && (len(resp.Contents) > 0 || len(resp.CommonPrefixes) > 0)
 }
 
-// ZIP 上传：强制打 public=yes 标签（原方案保留）
 func uploadDirectoryWithPublicTag(client *s3.Client, uploader *manager.Uploader, localDir, bucket, prefix string) (int, int) {
 	success := 0
 	fail := 0
@@ -92,7 +88,6 @@ func uploadDirectoryWithPublicTag(client *s3.Client, uploader *manager.Uploader,
 	return success, fail
 }
 
-// /sync 同步：完整保留源文件所有属性（标签、ACL、Content-Type 等）
 func syncOneDirectory(srcClient *s3.Client, srcDL *manager.Downloader, dstClient *s3.Client, dstUL *manager.Uploader,
 	srcBucket, dstBucket, prefix string, chatID int64) (int, int) {
 
@@ -119,7 +114,6 @@ func syncOneDirectory(srcClient *s3.Client, srcDL *manager.Downloader, dstClient
 			rel := strings.TrimPrefix(key, prefix)
 			targetKey := prefix + rel
 
-			// 跳过 ETag 一致的文件
 			head, _ := dstClient.HeadObject(context.Background(), &s3.HeadObjectInput{
 				Bucket: &dstBucket,
 				Key:    &targetKey,
@@ -128,13 +122,11 @@ func syncOneDirectory(srcClient *s3.Client, srcDL *manager.Downloader, dstClient
 				continue
 			}
 
-			// 冲突重命名
 			if head != nil {
 				targetKey = fmt.Sprintf("%s.sync%s", prefix+rel, time.Now().Format("20060102T150405Z"))
-				log.Warnf("文件冲突，已重命名: %s → %s", key, targetKey)
+				log.Warnf("冲突重命名: %s → %s", key, targetKey)
 			}
 
-			// 流式传输
 			pr, pw := io.Pipe()
 			go func(srcKey string) {
 				defer pw.Close()
@@ -147,19 +139,12 @@ func syncOneDirectory(srcClient *s3.Client, srcDL *manager.Downloader, dstClient
 				}
 			}(key)
 
-			// 上传时保留原始 HTTP Header 属性
-			_, uploadErr := dstUL.Upload(context.Background(), &s3.PutObjectInput{
-				Bucket:             &dstBucket,
-				Key:                &targetKey,
-				Body:               pr,
-				ContentType:        obj.ContentType,
-				CacheControl:       obj.CacheControl,
-				ContentDisposition: obj.ContentDisposition,
-				ContentEncoding:    obj.ContentEncoding,
-				ContentLanguage:    obj.ContentLanguage,
-				Metadata:           obj.Metadata,
+			_, err = dstUL.Upload(context.Background(), &s3.PutObjectInput{
+				Bucket: &dstBucket,
+				Key:    &targetKey,
+				Body:   pr,
 			})
-			if uploadErr != nil {
+			if err != nil {
 				fail++
 				continue
 			}
@@ -178,7 +163,7 @@ func syncOneDirectory(srcClient *s3.Client, srcDL *manager.Downloader, dstClient
 				})
 			}
 
-			// 复制 ACL（权限）
+			// 复制 ACL
 			aclResp, _ := srcClient.GetObjectAcl(context.Background(), &s3.GetObjectAclInput{
 				Bucket: &srcBucket,
 				Key:    &key,
@@ -207,7 +192,6 @@ func syncOneDirectory(srcClient *s3.Client, srcDL *manager.Downloader, dstClient
 	return success, fail
 }
 
-// 本地 ZIP 解压后获取顶级目录
 func listTopLevelDirsLocal(path string) []string {
 	var dirs []string
 	filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
@@ -223,7 +207,6 @@ func listTopLevelDirsLocal(path string) []string {
 	return dirs
 }
 
-// 计算最长公共前缀（用于 ZIP 智能路径识别）
 func longestCommonPrefix(a, b string) string {
 	i := 0
 	for i < len(a) && i < len(b) && a[i] == b[i] {
@@ -235,72 +218,45 @@ func longestCommonPrefix(a, b string) string {
 	return a[:i]
 }
 
-// 下载 Telegram 文件
 func downloadFile(url, path string) error {
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
+	f, _ := os.Create(path)
 	defer f.Close()
-
 	_, err = io.Copy(f, resp.Body)
 	return err
 }
 
-// 解压 ZIP
 func unzip(src, dest string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
-
 	for _, f := range r.File {
 		fpath := filepath.Join(dest, f.Name)
-
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(fpath, 0755)
 			continue
 		}
-
-		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
-			return err
-		}
-
-		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			return err
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			outFile.Close()
-			return err
-		}
-
-		_, err = io.Copy(outFile, rc)
+		os.MkdirAll(filepath.Dir(fpath), 0755)
+		outFile, _ := os.Create(fpath)
+		rc, _ := f.Open()
+		io.Copy(outFile, rc)
 		outFile.Close()
 		rc.Close()
-		if err != nil {
-			return err
-		}
 	}
 	return nil
 }
 
-// 清理临时文件
 func cleanupFiles(zipPath, dir string) {
 	os.Remove(zipPath)
 	os.RemoveAll(dir)
 }
 
-// 切片切换（用于多选）
 func toggleSlice(slice *[]string, item string) {
 	for i, v := range *slice {
 		if v == item {
@@ -311,7 +267,6 @@ func toggleSlice(slice *[]string, item string) {
 	*slice = append(*slice, item)
 }
 
-// 判断是否包含
 func contains(slice []string, item string) bool {
 	for _, v := range slice {
 		if v == item {

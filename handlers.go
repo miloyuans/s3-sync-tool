@@ -11,7 +11,6 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// /sync 流程
 func startSyncFlow(chatID int64) {
 	state := &UserState{
 		Step:    "src_env",
@@ -48,12 +47,11 @@ func buildEnvKeyboard(state *UserState, step string) tgbotapi.InlineKeyboardMark
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("下一步", "next_step"),
+		tgbotapi.NewInlineKeyboardButtonData("下一步 →", "next_step"),
 	))
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
-// ZIP 上传
 func handleZipUpload(msg *tgbotapi.Message) {
 	taskID := fmt.Sprintf("zip_%d_%s", msg.From.ID, msg.Document.FileID)
 	if _, loaded := taskLock.LoadOrStore(taskID, true); loaded {
@@ -71,11 +69,18 @@ func handleZipUpload(msg *tgbotapi.Message) {
 	}
 
 	zipPath := fmt.Sprintf("uploads/zip_%d_%d.zip", msg.From.ID, time.Now().UnixNano())
-	downloadFile(fileLink, zipPath)
+	if err := downloadFile(fileLink, zipPath); err != nil {
+		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "下载失败"))
+		return
+	}
 
 	unzipDir := fmt.Sprintf("uploads/unzipped_%d_%d", msg.From.ID, time.Now().UnixNano())
 	os.MkdirAll(unzipDir, 0755)
-	unzip(zipPath, unzipDir)
+	if err := unzip(zipPath, unzipDir); err != nil {
+		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "解压失败"))
+		cleanupFiles(zipPath, unzipDir)
+		return
+	}
 
 	dirs := listTopLevelDirsLocal(unzipDir)
 	if len(dirs) == 0 {
@@ -102,7 +107,7 @@ func handleZipUpload(msg *tgbotapi.Message) {
 		MsgIDs:      []int{statusMsg.MessageID},
 	}
 
-	stateaniiLock.Lock()
+	stateLock.Lock()
 	userStates[msg.Chat.ID] = state
 	stateLock.Unlock()
 
@@ -111,7 +116,6 @@ func handleZipUpload(msg *tgbotapi.Message) {
 	clearAndSend(state, text, &kb)
 }
 
-// 统一回调处理
 func handleCallback(cb *tgbotapi.CallbackQuery) {
 	if !isAdmin(cb.From.ID) {
 		return
@@ -138,17 +142,15 @@ func handleCallback(cb *tgbotapi.CallbackQuery) {
 			toggleSlice(&state.SrcEnvs, env)
 		} else {
 			if step == "dst_env" && contains(state.SrcEnvs, env) {
-				bot.Request(tgbotapi.NewCallback(cb.ID, "不能选源环境"))
+				bot.Request(tgbotapi.NewCallback(cb.ID, "不能选择源环境"))
 				return
 			}
 			toggleSlice(&state.DstEnvs, env)
 		}
 		kb := buildEnvKeyboard(state, step)
-		text := "已选择"
+		text := fmt.Sprintf("已选择（%d个）", len(state.DstEnvs))
 		if step == "src_env" {
-			text = fmt.Sprintf("源环境（%d个）：%s", len(state.SrcEnvs), strings.Join(state.SrcEnvs, ", "))
-		} else {
-			text = fmt.Sprintf("目标环境（%d个）：%s", len(state.DstEnvs), strings.Join(state.DstEnvs, ", "))
+			text = fmt.Sprintf("源环境（%d个）", len(state.SrcEnvs))
 		}
 		edit := tgbotapi.NewEditMessageTextAndMarkup(cb.Message.Chat.ID, cb.Message.MessageID, text, kb)
 		edit.ParseMode = "Markdown"
@@ -198,7 +200,6 @@ func handleCallback(cb *tgbotapi.CallbackQuery) {
 	}
 }
 
-// /sync 执行
 func executeSync(state *UserState) {
 	summary := "*同步完成*\n\n"
 	totalSuccess := 0
@@ -223,7 +224,6 @@ func executeSync(state *UserState) {
 	clearAndSend(state, summary, nil)
 }
 
-// ZIP 部署执行（保留原 public=yes 逻辑）
 func executeSmartUpload(state *UserState) {
 	summary := "*部署总结*\n\n"
 	successTotal := 0
@@ -243,11 +243,11 @@ func executeSmartUpload(state *UserState) {
 		if !exists && !state.AutoCreateAll {
 			kb := tgbotapi.NewInlineKeyboardMarkup(
 				tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData("全部创建", "create_all"),
-					tgbotapi.NewInlineKeyboardButtonData("取消", "cancel_deploy"),
+					tgbotapi.NewInlineKeyboardButtonData("全部创建并上传", "create_all"),
+					tgbotapi.NewInlineKeyboardButtonData("取消部署", "cancel_deploy"),
 				),
 			)
-			clearAndSend(state, fmt.Sprintf("路径 `%s` 在 %s 不存在\n是否创建？", s3Prefix, envName), &kb)
+			clearAndSend(state, fmt.Sprintf("路径 `%s` 在环境 *%s* 不存在\n是否创建？", s3Prefix, envName), &kb)
 			return
 		}
 		if !exists {
@@ -261,9 +261,9 @@ func executeSmartUpload(state *UserState) {
 	}
 
 	if createdDirs > 0 {
-		summary += fmt.Sprintf("\n已创建 %d 个目录\n", createdDirs)
+		summary += fmt.Sprintf("\n已自动创建 %d 个目录\n", createdDirs)
 	}
-	summary += fmt.Sprintf("\n*总计*：成功 %d，失败 %d", successTotal, failTotal)
+	summary += fmt.Sprintf("\n*总计*：成功 %d 个文件，失败 %d 个", successTotal, failTotal)
 	cleanupFiles(state.ZipPath, state.UnzipPath)
 	clearAndSend(state, summary, nil)
 	cleanupUserState(state.ChatID)

@@ -110,9 +110,11 @@ func handleMessage(msg *tgbotapi.Message) {
 
 	if strings.HasPrefix(text, "/start") || strings.HasPrefix(text, "/help") {
 		help := "*可用功能：*\n" +
-			"`/sync` - 多环境目录同步（保留标签、权限）\n" +
-			"发送 `.zip` - 一键部署（自动创建目录 + 打 public=yes 标签）"
-		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, help).WithParseMode("Markdown"))
+			"`/sync` - 多环境目录同步（保留所有标签、ACL、属性）\n" +
+			"发送 `.zip` - 一键部署（强制打 public=yes 标签）"
+		msgConfig := tgbotapi.NewMessage(msg.Chat.ID, help)
+		msgConfig.ParseMode = "Markdown"
+		bot.Send(msgConfig)
 	}
 }
 
