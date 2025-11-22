@@ -71,7 +71,7 @@ func uploadDirectoryWithPublicTag(client *s3.Client, uploader *manager.Uploader,
 		}
 		defer f.Close()
 
-		log.Infof("上传文件: %s → %s", path, key)
+		log.Infof("上传文件638文件: %s → %s", path, key)
 		_, err = uploader.Upload(context.Background(), &s3.PutObjectInput{
 			Bucket:  &bucket,
 			Key:     &key,
@@ -152,7 +152,6 @@ func syncOneDirectory(srcClient *s3.Client, srcDL *manager.Downloader, dstClient
 			}
 			success++
 
-			// 复制标签
 			tagResp, _ := srcClient.GetObjectTagging(context.Background(), &s3.GetObjectTaggingInput{
 				Bucket: &srcBucket,
 				Key:    &key,
@@ -165,7 +164,6 @@ func syncOneDirectory(srcClient *s3.Client, srcDL *manager.Downloader, dstClient
 				})
 			}
 
-			// 复制 ACL
 			aclResp, _ := srcClient.GetObjectAcl(context.Background(), &s3.GetObjectAclInput{
 				Bucket: &srcBucket,
 				Key:    &key,

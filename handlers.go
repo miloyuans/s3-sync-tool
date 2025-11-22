@@ -106,7 +106,7 @@ func handleZipUpload(msg *tgbotapi.Message) {
 	state := &UserState{
 		Step:        "upload_select_env",
 		DstEnvs:     []string{},
-		UploadRoot:  common oversight
+		UploadRoot:  commonPrefix,
 		UnzipPath:   unzipDir,
 		ZipPath:     zipPath,
 		ChatID:      msg.Chat.ID,
@@ -175,7 +175,6 @@ func handleCallback(cb *tgbotapi.CallbackQuery) {
 			return
 		}
 
-		// dst_env 或 upload_select_env 点击下一步
 		if len(state.DstEnvs) == 0 {
 			bot.Request(tgbotapi.NewCallback(cb.ID, "请至少选择一个目标环境"))
 			return
